@@ -24,6 +24,10 @@ namespace GibNet
         // Authentication
         private readonly Dictionary<int, bool> _serverConnectionStates;
         private const int AuthPeriodSeconds = 30;
+
+        private readonly List<NetPeer> _authenticatedPeers;
+        
+        public static uint ServerTicks { get; private set; }
         
         // Events
         public event Action OnStartServer;
@@ -34,10 +38,13 @@ namespace GibNet
         public LibServer()
         {
             _server = new NetManager(this);
-            _processor = new ServerPacketProcessor();
+            _server.UpdateTime = (int) (Time.fixedDeltaTime * 1000);
+            _processor = new ServerPacketProcessor(this);
 
             _serverStarted = false;
             _serverConnectionStates = new Dictionary<int, bool>();
+
+            _authenticatedPeers = new List<NetPeer>();
             
             NetworkServer.SetupPacketProcessor(_processor);
             
@@ -69,6 +76,17 @@ namespace GibNet
 
                 _serverConnectionStates[peer.Id] = true;
                 
+                // Also send them the current ticks
+                var ticks = new ServerTickValue
+                {
+                    ticks = ServerTicks + 1,
+                    ping = peer.Ping
+                };
+
+                NetworkServer.Send(peer, ticks, DeliveryMethod.ReliableOrdered);
+
+                _authenticatedPeers.Add(peer);
+                
                 OnServerConnect?.Invoke(peer);
             });
         }
@@ -77,6 +95,8 @@ namespace GibNet
         {
             _server.Start(9050);
             _serverStarted = true;
+
+            ServerTicks = 100;
             
             OnStartServer?.Invoke();
         }
@@ -94,7 +114,32 @@ namespace GibNet
         public void Update()
         {
             if (_serverStarted)
+            {
                 _server.PollEvents();
+            }
+        }
+
+        public void FixedUpdate()
+        {
+            if (_serverStarted)
+            {
+                ServerTicks++;
+
+                // Send Ticks to Connected Clients
+                if (ServerTicks % 200 == 0)
+                {
+                    foreach (var peer in _authenticatedPeers)
+                    {
+                        var ticks = new ServerTickValue
+                        {
+                            ticks = ServerTicks + 1,
+                            ping = peer.Ping
+                        };
+
+                        NetworkServer.Send(peer, ticks, DeliveryMethod.ReliableOrdered);
+                    }
+                }
+            }
         }
         
         public void Destroy()
@@ -130,6 +175,8 @@ namespace GibNet
             
             _serverConnectionStates.Remove(peer.Id);
 
+            _authenticatedPeers.Remove(peer);
+
             _processor.RemoveClientEncryption(peer);
         }
     
@@ -164,6 +211,11 @@ namespace GibNet
                     peer.Disconnect();
                 }
             }
+        }
+
+        public IEnumerable<NetPeer> GetAuthenticatedPeers()
+        {
+            return _authenticatedPeers.ToArray();
         }
     }
 }

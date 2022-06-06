@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using GibNet.Encryption;
 using GibNet.Packets.Interfaces;
 using LiteNetLib;
@@ -11,11 +12,17 @@ namespace GibNet.Packets.Processors
     public class ServerPacketProcessor : PacketProcessor
     {
         
+        private readonly Dictionary<Type, object> _packetActions = new();
+
+        private readonly LibServer _libServer;
+        
         private readonly Dictionary<int, AesKey> _clientAesKeys;
         private readonly Dictionary<int, RsaKeyPair> _clientRsaKeys;
 
-        public ServerPacketProcessor()
+        public ServerPacketProcessor(LibServer libServer)
         {
+            _libServer = libServer;
+            
             _clientAesKeys = new Dictionary<int, AesKey>();
             _clientRsaKeys = new Dictionary<int, RsaKeyPair>();
         }
@@ -40,54 +47,83 @@ namespace GibNet.Packets.Processors
             _clientRsaKeys.Clear();
             _clientAesKeys.Clear();
         }
+        
+        private void Add<T>(Action<NetPeer, T> foo) where T : class, new()
+        {
+            if (!_packetActions.TryGetValue(typeof(T), out var tmp))
+            {
+                tmp = new List<Action<NetPeer, T>>();
+                _packetActions[typeof(T)] = tmp;
+            }
+
+            var list = (List<Action<NetPeer, T>>)tmp;
+            list.Add(foo);
+        }
+
+        private void Invoke<T>(NetPeer peer, T packet) where T : class, new()
+        {
+            if (_packetActions.TryGetValue(typeof(T), out var tmp))
+            {
+                var list = (List<Action<NetPeer, T>>)tmp;
+                foreach (var action in list)
+                {
+                    action(peer, packet);
+                }
+            }
+        }
 
         public void PacketReceived<T>(Action<NetPeer, T> onReceive) where T : class, new()
         {
-            Callbacks[GetHash<T>()] = (peer, reader) =>
-            {
-                var byteSize = reader.GetUShort();
+            Add(onReceive);
             
-                var data = new byte[byteSize];
-                reader.GetBytes(data, byteSize);
-
-                var wrapper = PacketWrapper.Deserialize(data);
-
-                T packet;
-                
-                switch (wrapper.EncryptionType)
+            if (!Callbacks.ContainsKey(GetHash<T>()))
+            {
+                Callbacks[GetHash<T>()] = (peer, reader) =>
                 {
-                    case PacketEncryptionType.NONE:
-                        if (GetPacketData(wrapper, out packet))
-                            onReceive(peer, packet);
-                        break;
-                    case PacketEncryptionType.AES:
-                        if (!_clientAesKeys.ContainsKey(peer.Id))
-                        {
-                            NetworkDebug.ServerErrorFromPeer(peer, "AES Key is NULL... Disconnecting Client");
-                            peer.Disconnect();
-                            return;
-                        }
+                    var byteSize = reader.GetUShort();
 
-                        if (GetAesPacketData(wrapper, _clientAesKeys[peer.Id], out packet))
-                            onReceive(peer, packet);
-                        break;
-                    case PacketEncryptionType.RSA:
-                        if (!_clientRsaKeys.ContainsKey(peer.Id))
-                        {
-                            NetworkDebug.ServerErrorFromPeer(peer, "RSA Key is NULL... Disconnecting Client");
+                    var data = new byte[byteSize];
+                    reader.GetBytes(data, byteSize);
+
+                    var wrapper = PacketWrapper.Deserialize(data);
+
+                    T packet;
+
+                    switch (wrapper.EncryptionType)
+                    {
+                        case PacketEncryptionType.NONE:
+                            if (GetPacketData(wrapper, out packet))
+                                Invoke(peer, packet);
+                            break;
+                        case PacketEncryptionType.AES:
+                            if (!_clientAesKeys.ContainsKey(peer.Id))
+                            {
+                                NetworkDebug.ServerErrorFromPeer(peer, "AES Key is NULL... Disconnecting Client");
+                                peer.Disconnect();
+                                return;
+                            }
+
+                            if (GetAesPacketData(wrapper, _clientAesKeys[peer.Id], out packet))
+                                Invoke(peer, packet);
+                            break;
+                        case PacketEncryptionType.RSA:
+                            if (!_clientRsaKeys.ContainsKey(peer.Id))
+                            {
+                                NetworkDebug.ServerErrorFromPeer(peer, "RSA Key is NULL... Disconnecting Client");
+                                peer.Disconnect();
+                                return;
+                            }
+
+                            if (GetRsaPacketData(wrapper, _clientRsaKeys[peer.Id], out packet))
+                                Invoke(peer, packet);
+                            break;
+                        default:
+                            NetworkDebug.ServerErrorFromPeer(peer, "Invalid Packet Received... Disconnecting Client");
                             peer.Disconnect();
                             return;
-                        }
-                        
-                        if (GetRsaPacketData(wrapper, _clientRsaKeys[peer.Id], out packet))
-                            onReceive(peer, packet);
-                        break;
-                    default:
-                        NetworkDebug.ServerErrorFromPeer(peer, "Invalid Packet Received... Disconnecting Client");
-                        peer.Disconnect();
-                        return;
-                }
-            };
+                    }
+                };
+            }
         }
         
         public void Send<T>(NetPeer peer, T packet, DeliveryMethod options) where T : class, new()
@@ -114,11 +150,20 @@ namespace GibNet.Packets.Processors
             peer.Send(NetDataWriter, options);
         }
 
-        public void SendToAll<T>(NetManager manager, T packet, DeliveryMethod options) where T : class, new()
+        public void SendToAll<T>(T packet, DeliveryMethod options) where T : class, new()
         {
-            //_netDataWriter.Reset();
-            //WriteAesEncrypted(_netDataWriter, packet);
-            //manager.SendToAll(_netDataWriter, options);
+            foreach (var peer in _libServer.GetAuthenticatedPeers())
+            {
+                Send(peer, packet, options);
+            }
+        }
+        
+        public void SendToAllExcluded<T>(NetPeer excluded, T packet, DeliveryMethod options) where T : class, new()
+        {
+            foreach (var peer in _libServer.GetAuthenticatedPeers().Where(peer => peer.Id != excluded.Id))
+            {
+                Send(peer, packet, options);
+            }
         }
         
     }

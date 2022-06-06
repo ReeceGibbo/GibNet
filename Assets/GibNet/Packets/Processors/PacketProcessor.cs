@@ -9,7 +9,7 @@ namespace GibNet.Packets.Processors
 {
     public class PacketProcessor
     {
-    
+        
         protected readonly NetDataWriter NetDataWriter;
 
         protected delegate void PacketReceivedDelegate(NetPeer peer, NetDataReader reader);

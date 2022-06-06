@@ -27,5 +27,10 @@ namespace GibNet
             _processor.Send<T>(packet, options);
         }
 
+        public static uint GetTicks()
+        {
+            return LibClient.ClientTicks;
+        }
+
     }
 }

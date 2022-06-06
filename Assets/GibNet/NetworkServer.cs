@@ -27,5 +27,20 @@ namespace GibNet
             _processor.Send<T>(peer, packet, options);
         }
         
+        public static void SendToAll<T>(T packet, DeliveryMethod options) where T : class, new()
+        {
+            _processor.SendToAll<T>(packet, options);
+        }
+        
+        public static void SendToAllExcluded<T>(NetPeer excluded, T packet, DeliveryMethod options) where T : class, new()
+        {
+            _processor.SendToAllExcluded<T>(excluded, packet, options);
+        }
+        
+        public static uint GetTicks()
+        {
+            return LibServer.ServerTicks;
+        }
+        
     }
 }

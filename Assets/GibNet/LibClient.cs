@@ -7,6 +7,7 @@ using GibNet.Packets.Authentication;
 using GibNet.Packets.Processors;
 using LiteNetLib;
 using UnityEngine;
+using Random = UnityEngine.Random;
 
 namespace GibNet
 {
@@ -17,7 +18,10 @@ namespace GibNet
         private readonly ClientPacketProcessor _processor;
 
         private bool _clientConnected;
+        private bool _firstTick = false;
         private bool _connectionComplete;
+        
+        public static uint ClientTicks { get; private set; }
         
         // Events
         public event Action OnStartClient;
@@ -28,8 +32,10 @@ namespace GibNet
         public LibClient()
         {
             _client = new NetManager(this);
-            _processor = new ClientPacketProcessor();
+            _client.UpdateTime = (int) (Time.fixedDeltaTime * 1000);
 
+            _processor = new ClientPacketProcessor();
+            
             _clientConnected = false;
             _connectionComplete = false;
             
@@ -61,6 +67,41 @@ namespace GibNet
                 _connectionComplete = true;
                 OnClientConnect?.Invoke();
             });
+            
+            NetworkClient.PacketReceived<ServerTickValue>(newTicks =>
+            {
+                // Plus 2 because it takes 1 tick for client to process and 1 tick for server to process
+                // Assume ping is +3
+                //float addedValue = ((newTicks.ping + 3) + (2));
+                
+                // 5 = 100ms + 2 for 40ms processing time
+                
+                Debug.Log("Ping: " + newTicks.ping);
+                
+                float addedValue = (1) + (2);
+                var tickAddition = Mathf.CeilToInt(addedValue);
+                
+                var newClientTick = newTicks.ticks + tickAddition;
+                
+                Debug.Log("Server Ticks: " + newTicks.ticks + " | " + NetworkServer.GetTicks() + " | " + "New Client Tick: " + newClientTick);
+
+                if (!_firstTick)
+                {
+                    NetworkDebug.ClientMessage(
+                        $"FIRST TICK: Tick on client: {ClientTicks} is being changed to {newClientTick}");
+                    ClientTicks = (uint)newClientTick;
+
+                    _firstTick = true;
+                    return;
+                }
+
+                if (Mathf.Abs(ClientTicks - newClientTick) > 2)
+                {
+                    NetworkDebug.ClientMessage(
+                        $"CORRECTION: Tick on client: {ClientTicks} is being changed to {newClientTick}");
+                    ClientTicks = (uint)newClientTick;
+                }
+            });
         }
 
         public void Connect()
@@ -68,6 +109,8 @@ namespace GibNet
             _client.Start();
             _client.Connect("localhost", 9050, "");
             _clientConnected = true;
+
+            ClientTicks = 100;
             
             OnStartClient?.Invoke();
         }
@@ -82,7 +125,17 @@ namespace GibNet
         public void Update()
         {
             if (_clientConnected)
+            {
                 _client.PollEvents();
+            }
+        }
+
+        public void FixedUpdate()
+        {
+            if (_clientConnected)
+            {
+                ClientTicks++;
+            }
         }
 
         public void Destroy()

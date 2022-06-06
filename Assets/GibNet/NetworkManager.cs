@@ -14,8 +14,9 @@ namespace GibNet
         private LibClient _libClient;
         private LibServer _libServer;
         
-        public void Awake()
+        public virtual void Awake()
         {
+            DontDestroyOnLoad(gameObject);
             _libClient = new LibClient();
             _libServer = new LibServer();
             
@@ -30,19 +31,25 @@ namespace GibNet
             _libServer.OnStopServer += OnStopServer;
         }
 
-        public void Start()
+        public virtual void Start()
         {
             _libServer.StartServer();
             _libClient.Connect();
         }
 
-        public void FixedUpdate()
+        public virtual void Update()
         {
             _libClient.Update();
             _libServer.Update();
         }
 
-        public void OnDestroy()
+        public void FixedUpdate()
+        {
+            _libClient.FixedUpdate();
+            _libServer.FixedUpdate();
+        }
+
+        public virtual void OnDestroy()
         {
             _libClient.Destroy();
             _libServer.Destroy();
